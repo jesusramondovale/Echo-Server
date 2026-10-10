@@ -23,4 +23,7 @@ public static class ErrorCodes
     public const string InvalidDeviceKey = "INVALID_DEVICE_KEY";
     public const string InvalidMedia = "INVALID_MEDIA";
     public const string BodyTooLong = "BODY_TOO_LONG";
+    public const string AlreadyBoosted = "ALREADY_BOOSTED";
+    public const string OwnPost = "OWN_POST";
+    public const string InvalidPushToken = "INVALID_PUSH_TOKEN";
 }

@@ -46,6 +46,14 @@ public interface IFeedService
         double lon,
         string? clientIp,
         CancellationToken cancellationToken = default);
+
+    Task<BoostResponse> BoostPostAsync(
+        Guid userId,
+        Guid postId,
+        double lat,
+        double lon,
+        string? clientIp,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class FeedService : IFeedService
@@ -54,6 +62,7 @@ public sealed class FeedService : IFeedService
     private readonly ILocationValidator _location;
     private readonly IRateLimiter _rateLimiter;
     private readonly IMediaStorage _mediaStorage;
+    private readonly IPushNotificationService _push;
     private static readonly GeometryFactory GeometryFactory =
         NtsGeometryServices.Instance.CreateGeometryFactory(srid: 4326);
 
@@ -61,12 +70,14 @@ public sealed class FeedService : IFeedService
         DbContext db,
         ILocationValidator location,
         IRateLimiter rateLimiter,
-        IMediaStorage mediaStorage)
+        IMediaStorage mediaStorage,
+        IPushNotificationService push)
     {
         _db = db;
         _location = location;
         _rateLimiter = rateLimiter;
         _mediaStorage = mediaStorage;
+        _push = push;
     }
 
     public async Task<FeedResponse> GetFeedAsync(
@@ -77,7 +88,7 @@ public sealed class FeedService : IFeedService
         string? clientIp,
         CancellationToken cancellationToken = default)
     {
-        await TouchUserAsync(userId, cancellationToken);
+        await TouchUserAsync(userId, lat, lon, cancellationToken);
         await _location.ValidateViewerLocationAsync(lat, lon, clientIp, cancellationToken);
 
         var viewer = CreatePoint(lat, lon);
@@ -90,7 +101,10 @@ public sealed class FeedService : IFeedService
         var query = _db.Set<Post>()
             .AsNoTracking()
             .Include(p => p.Media)
-            .Where(p => !p.IsHidden && p.Location.IsWithinDistance(viewer, GeoConstants.FeedRadiusMeters));
+            .Where(p => !p.IsHidden
+                        && p.Location.IsWithinDistance(
+                            viewer,
+                            GeoConstants.FeedRadiusMeters + p.ReachBoost * GeoConstants.ReachBoostMetersPerLevel));
 
         if (after is not null)
         {
@@ -106,6 +120,8 @@ public sealed class FeedService : IFeedService
                 p.Body,
                 p.CreatedAt,
                 p.AuthorId,
+                p.ReachBoost,
+                ViewerHasBoosted = p.Boosts.Any(b => b.UserId == userId),
                 ReplyCount = p.Replies.Count,
                 Media = p.Media,
                 p.Location
@@ -117,6 +133,8 @@ public sealed class FeedService : IFeedService
             p.Body,
             p.CreatedAt,
             p.AuthorId,
+            p.ReachBoost,
+            p.ViewerHasBoosted,
             p.ReplyCount,
             p.Media,
             p.Location.Y,
@@ -137,7 +155,7 @@ public sealed class FeedService : IFeedService
         string? clientIp,
         CancellationToken cancellationToken = default)
     {
-        await TouchUserAsync(userId, cancellationToken);
+        await TouchUserAsync(userId, lat, lon, cancellationToken);
         await _location.ValidateViewerLocationAsync(lat, lon, clientIp, cancellationToken);
 
         var viewer = CreatePoint(lat, lon);
@@ -152,10 +170,14 @@ public sealed class FeedService : IFeedService
             throw new AppException(ErrorCodes.NotFound, "Post not found.", 404);
         }
 
-        if (!post.Location.IsWithinDistance(viewer, GeoConstants.FeedRadiusMeters))
+        if (!IsWithinEffectiveRadius(post, viewer))
         {
-            throw new AppException(ErrorCodes.OutOfRange, "Post is outside your 15 km zone.", 403);
+            throw new AppException(ErrorCodes.OutOfRange, "Post is outside your visibility zone.", 403);
         }
+
+        var viewerHasBoosted = await _db.Set<PostBoost>()
+            .AsNoTracking()
+            .AnyAsync(b => b.PostId == postId && b.UserId == userId, cancellationToken);
 
         var replies = post.Replies
             .OrderBy(r => r.CreatedAt)
@@ -172,6 +194,8 @@ public sealed class FeedService : IFeedService
             post.Body,
             post.CreatedAt,
             AuthorGlyph.FromUserId(post.AuthorId),
+            post.ReachBoost,
+            viewerHasBoosted,
             MapMedia(post.Media),
             replies,
             post.Location.Y,
@@ -185,14 +209,17 @@ public sealed class FeedService : IFeedService
         string? clientIp,
         CancellationToken cancellationToken = default)
     {
-        await TouchUserAsync(userId, cancellationToken);
+        await TouchUserAsync(userId, lat, lon, cancellationToken);
         await _location.ValidateViewerLocationAsync(lat, lon, clientIp, cancellationToken);
 
         var viewer = CreatePoint(lat, lon);
         var posts = await _db.Set<Post>()
             .AsNoTracking()
             .Include(p => p.Media)
-            .Where(p => !p.IsHidden && p.Location.IsWithinDistance(viewer, GeoConstants.FeedRadiusMeters))
+            .Where(p => !p.IsHidden
+                        && p.Location.IsWithinDistance(
+                            viewer,
+                            GeoConstants.FeedRadiusMeters + p.ReachBoost * GeoConstants.ReachBoostMetersPerLevel))
             .OrderByDescending(p => p.CreatedAt)
             .Take(GeoConstants.MapMaxPosts)
             .Select(p => new
@@ -201,6 +228,8 @@ public sealed class FeedService : IFeedService
                 p.Body,
                 p.CreatedAt,
                 p.AuthorId,
+                p.ReachBoost,
+                ViewerHasBoosted = p.Boosts.Any(b => b.UserId == userId),
                 ReplyCount = p.Replies.Count,
                 Media = p.Media,
                 p.Location
@@ -212,6 +241,8 @@ public sealed class FeedService : IFeedService
             p.Body,
             p.CreatedAt,
             p.AuthorId,
+            p.ReachBoost,
+            p.ViewerHasBoosted,
             p.ReplyCount,
             p.Media,
             p.Location.Y,
@@ -226,7 +257,7 @@ public sealed class FeedService : IFeedService
         string? clientIp,
         CancellationToken cancellationToken = default)
     {
-        await TouchUserAsync(userId, cancellationToken);
+        await TouchUserAsync(userId, request.Lat, request.Lon, cancellationToken);
         await _location.ValidateViewerLocationAsync(request.Lat, request.Lon, clientIp, cancellationToken);
         ValidateBody(request.Body);
 
@@ -244,11 +275,27 @@ public sealed class FeedService : IFeedService
             Body = request.Body.Trim(),
             MediaId = request.MediaId,
             Location = CreatePoint(request.Lat, request.Lon),
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = DateTimeOffset.UtcNow,
+            ReachBoost = 0
         };
 
         _db.Set<Post>().Add(post);
         await _db.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await _push.NotifyNewPostNearbyAsync(
+                userId,
+                post.Id,
+                request.Lat,
+                request.Lon,
+                GeoConstants.FeedRadiusMeters,
+                cancellationToken);
+        }
+        catch
+        {
+            // Push must never fail post creation.
+        }
 
         Media? media = null;
         if (request.MediaId is Guid mid)
@@ -261,6 +308,8 @@ public sealed class FeedService : IFeedService
             post.Body,
             post.CreatedAt,
             userId,
+            post.ReachBoost,
+            viewerHasBoosted: false,
             0,
             media,
             request.Lat,
@@ -274,7 +323,7 @@ public sealed class FeedService : IFeedService
         string? clientIp,
         CancellationToken cancellationToken = default)
     {
-        await TouchUserAsync(userId, cancellationToken);
+        await TouchUserAsync(userId, request.Lat, request.Lon, cancellationToken);
         await _location.ValidateViewerLocationAsync(request.Lat, request.Lon, clientIp, cancellationToken);
         ValidateBody(request.Body);
 
@@ -290,9 +339,9 @@ public sealed class FeedService : IFeedService
             throw new AppException(ErrorCodes.NotFound, "Post not found.", 404);
         }
 
-        if (!post.Location.IsWithinDistance(viewer, GeoConstants.FeedRadiusMeters))
+        if (!IsWithinEffectiveRadius(post, viewer))
         {
-            throw new AppException(ErrorCodes.OutOfRange, "Post is outside your 15 km zone.", 403);
+            throw new AppException(ErrorCodes.OutOfRange, "Post is outside your visibility zone.", 403);
         }
 
         await EnsureMediaExistsAsync(request.MediaId, cancellationToken);
@@ -324,11 +373,83 @@ public sealed class FeedService : IFeedService
             MapMedia(media));
     }
 
+    public async Task<BoostResponse> BoostPostAsync(
+        Guid userId,
+        Guid postId,
+        double lat,
+        double lon,
+        string? clientIp,
+        CancellationToken cancellationToken = default)
+    {
+        await TouchUserAsync(userId, lat, lon, cancellationToken);
+        await _location.ValidateViewerLocationAsync(lat, lon, clientIp, cancellationToken);
+
+        var viewer = CreatePoint(lat, lon);
+        var post = await _db.Set<Post>().FirstOrDefaultAsync(p => p.Id == postId && !p.IsHidden, cancellationToken);
+        if (post is null)
+        {
+            throw new AppException(ErrorCodes.NotFound, "Post not found.", 404);
+        }
+
+        if (post.AuthorId == userId)
+        {
+            throw new AppException(ErrorCodes.OwnPost, "You cannot boost your own post.", 403);
+        }
+
+        if (!IsWithinEffectiveRadius(post, viewer))
+        {
+            throw new AppException(ErrorCodes.OutOfRange, "Post is outside your visibility zone.", 403);
+        }
+
+        var alreadyBoosted = await _db.Set<PostBoost>()
+            .AnyAsync(b => b.PostId == postId && b.UserId == userId, cancellationToken);
+        if (alreadyBoosted)
+        {
+            throw new AppException(ErrorCodes.AlreadyBoosted, "You already boosted this post.", 409);
+        }
+
+        _db.Set<PostBoost>().Add(new PostBoost
+        {
+            PostId = postId,
+            UserId = userId,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        post.ReachBoost += 1;
+        var authorId = post.AuthorId;
+
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            throw new AppException(ErrorCodes.AlreadyBoosted, "You already boosted this post.", 409);
+        }
+
+        try
+        {
+            await _push.NotifyPostBoostedAsync(authorId, postId, cancellationToken);
+        }
+        catch
+        {
+            // Push must never fail boost.
+        }
+
+        return new BoostResponse(post.ReachBoost, ViewerHasBoosted: true);
+    }
+
+    private static bool IsWithinEffectiveRadius(Post post, Point viewer)
+        => post.Location.IsWithinDistance(
+            viewer,
+            GeoConstants.FeedRadiusMeters + post.ReachBoost * GeoConstants.ReachBoostMetersPerLevel);
+
     private PostSummaryDto ToSummary(
         Guid id,
         string body,
         DateTimeOffset createdAt,
         Guid authorId,
+        int reachBoost,
+        bool viewerHasBoosted,
         int replyCount,
         Media? media,
         double lat,
@@ -338,6 +459,8 @@ public sealed class FeedService : IFeedService
             body,
             createdAt,
             AuthorGlyph.FromUserId(authorId),
+            reachBoost,
+            viewerHasBoosted,
             replyCount,
             MapMedia(media),
             lat,
@@ -385,7 +508,7 @@ public sealed class FeedService : IFeedService
         }
     }
 
-    private async Task TouchUserAsync(Guid userId, CancellationToken cancellationToken)
+    private async Task TouchUserAsync(Guid userId, double lat, double lon, CancellationToken cancellationToken)
     {
         var user = await _db.Set<AnonymousUser>().FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
         if (user is null)
@@ -393,7 +516,11 @@ public sealed class FeedService : IFeedService
             throw new AppException(ErrorCodes.NotFound, "User not found.", 401);
         }
 
-        user.LastSeenAt = DateTimeOffset.UtcNow;
+        var now = DateTimeOffset.UtcNow;
+        user.LastSeenAt = now;
+        user.LastLat = lat;
+        user.LastLon = lon;
+        user.LastLocationAt = now;
         await _db.SaveChangesAsync(cancellationToken);
     }
 }

@@ -11,6 +11,7 @@ public static class DependencyInjection
         services.AddScoped<ISessionService, SessionService>();
         services.AddScoped<IFeedService, FeedService>();
         services.AddScoped<IMediaService, MediaService>();
+        services.AddScoped<IPushTokenService, PushTokenService>();
         return services;
     }
 }

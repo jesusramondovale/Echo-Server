@@ -3,3 +3,4 @@ obj/
 App_Data/
 *.user
 .vs/
+firebase-service-account.json

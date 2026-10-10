@@ -44,8 +44,10 @@ En Development, `Geo:SkipIpCheck` está en `true` (IPs locales no tienen GeoIP f
 | POST | `/api/posts` | JWT | Crear post `{ body, lat, lon, mediaId? }` |
 | GET | `/api/posts/{id}?lat=&lon=` | JWT | Detalle + replies (si estás en rango) |
 | POST | `/api/posts/{id}/replies` | JWT | Responder |
+| POST | `/api/posts/{id}/boost?lat=&lon=` | JWT | +1 reach (1 km) si estás en rango |
 | POST | `/api/media` | JWT | Upload multipart `file` |
 | PUT | `/api/me/avatar` | JWT | `{ mediaId }` |
+| PUT | `/api/me/push-token` | JWT | Registrar token FCM `{ token, platform }` |
 
 ## Despliegue en IIS (servidor `83.54.52.239`)
 

@@ -28,6 +28,8 @@ public static class DependencyInjection
         services.AddSingleton<IRateLimiter, InMemoryRateLimiter>();
         services.AddSingleton<IMediaStorage, LocalMediaStorage>();
         services.AddHttpClient<IGeoIpService, HttpGeoIpService>();
+        services.AddHttpClient("fcm");
+        services.AddScoped<IPushNotificationService, FcmPushService>();
 
         var skipIp = configuration.GetValue("Geo:SkipIpCheck", false);
         services.AddScoped<ILocationValidator>(sp =>

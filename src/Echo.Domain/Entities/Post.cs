@@ -13,6 +13,9 @@ public class Post
     public required Point Location { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public bool IsHidden { get; set; }
+    /// <summary>Extra km of visibility beyond the base 15 km radius.</summary>
+    public int ReachBoost { get; set; }
 
     public ICollection<Reply> Replies { get; set; } = new List<Reply>();
+    public ICollection<PostBoost> Boosts { get; set; } = new List<PostBoost>();
 }

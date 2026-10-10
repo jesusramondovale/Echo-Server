@@ -13,6 +13,8 @@ public sealed class EchoDbContext : DbContext
     public DbSet<Post> Posts => Set<Post>();
     public DbSet<Reply> Replies => Set<Reply>();
     public DbSet<Media> Media => Set<Media>();
+    public DbSet<PostBoost> PostBoosts => Set<PostBoost>();
+    public DbSet<PushToken> PushTokens => Set<PushToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -24,10 +26,25 @@ public sealed class EchoDbContext : DbContext
             e.HasKey(x => x.Id);
             e.Property(x => x.DeviceKeyHash).HasMaxLength(64).IsRequired();
             e.HasIndex(x => x.DeviceKeyHash).IsUnique();
+            e.HasIndex(x => x.LastLocationAt);
             e.HasOne(x => x.AvatarMedia)
                 .WithMany()
                 .HasForeignKey(x => x.AvatarMediaId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<PushToken>(e =>
+        {
+            e.ToTable("push_tokens");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Token).HasMaxLength(512).IsRequired();
+            e.Property(x => x.Platform).HasMaxLength(16).IsRequired();
+            e.HasIndex(x => x.Token).IsUnique();
+            e.HasIndex(x => x.UserId);
+            e.HasOne(x => x.User)
+                .WithMany(u => u.PushTokens)
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Media>(e =>
@@ -43,6 +60,7 @@ public sealed class EchoDbContext : DbContext
             e.ToTable("posts");
             e.HasKey(x => x.Id);
             e.Property(x => x.Body).HasMaxLength(2000).IsRequired();
+            e.Property(x => x.ReachBoost).HasDefaultValue(0);
             e.Property(x => x.Location).HasColumnType("geography (Point, 4326)");
             e.HasIndex(x => x.Location).HasMethod("GIST");
             e.HasIndex(x => x.CreatedAt);
@@ -54,6 +72,21 @@ public sealed class EchoDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(x => x.MediaId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<PostBoost>(e =>
+        {
+            e.ToTable("post_boosts");
+            e.HasKey(x => new { x.PostId, x.UserId });
+            e.HasIndex(x => x.CreatedAt);
+            e.HasOne(x => x.Post)
+                .WithMany(p => p.Boosts)
+                .HasForeignKey(x => x.PostId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.User)
+                .WithMany(u => u.Boosts)
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Reply>(e =>

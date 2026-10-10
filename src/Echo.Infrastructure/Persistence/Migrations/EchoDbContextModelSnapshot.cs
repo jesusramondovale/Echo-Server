@@ -41,6 +41,15 @@ namespace Echo.Infrastructure.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<double?>("LastLat")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTimeOffset?>("LastLocationAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double?>("LastLon")
+                        .HasColumnType("double precision");
+
                     b.Property<DateTimeOffset>("LastSeenAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -50,6 +59,8 @@ namespace Echo.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("DeviceKeyHash")
                         .IsUnique();
+
+                    b.HasIndex("LastLocationAt");
 
                     b.ToTable("anonymous_users", (string)null);
                 });
@@ -114,6 +125,11 @@ namespace Echo.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("MediaId")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("ReachBoost")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.HasKey("Id");
 
                     b.HasIndex("AuthorId");
@@ -127,6 +143,58 @@ namespace Echo.Infrastructure.Persistence.Migrations
                     b.HasIndex("MediaId");
 
                     b.ToTable("posts", (string)null);
+                });
+
+            modelBuilder.Entity("Echo.Domain.Entities.PostBoost", b =>
+                {
+                    b.Property<Guid>("PostId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("PostId", "UserId");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("post_boosts", (string)null);
+                });
+
+            modelBuilder.Entity("Echo.Domain.Entities.PushToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Token")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Token")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("push_tokens", (string)null);
                 });
 
             modelBuilder.Entity("Echo.Domain.Entities.Reply", b =>
@@ -193,6 +261,36 @@ namespace Echo.Infrastructure.Persistence.Migrations
                     b.Navigation("Media");
                 });
 
+            modelBuilder.Entity("Echo.Domain.Entities.PostBoost", b =>
+                {
+                    b.HasOne("Echo.Domain.Entities.Post", "Post")
+                        .WithMany("Boosts")
+                        .HasForeignKey("PostId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Echo.Domain.Entities.AnonymousUser", "User")
+                        .WithMany("Boosts")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Post");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Echo.Domain.Entities.PushToken", b =>
+                {
+                    b.HasOne("Echo.Domain.Entities.AnonymousUser", "User")
+                        .WithMany("PushTokens")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Echo.Domain.Entities.Reply", b =>
                 {
                     b.HasOne("Echo.Domain.Entities.AnonymousUser", "Author")
@@ -221,13 +319,19 @@ namespace Echo.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Echo.Domain.Entities.AnonymousUser", b =>
                 {
+                    b.Navigation("Boosts");
+
                     b.Navigation("Posts");
+
+                    b.Navigation("PushTokens");
 
                     b.Navigation("Replies");
                 });
 
             modelBuilder.Entity("Echo.Domain.Entities.Post", b =>
                 {
+                    b.Navigation("Boosts");
+
                     b.Navigation("Replies");
                 });
 #pragma warning restore 612, 618

@@ -15,6 +15,8 @@ public record PostSummaryDto(
     string Body,
     DateTimeOffset CreatedAt,
     string AuthorGlyph,
+    int ReachBoost,
+    bool ViewerHasBoosted,
     int ReplyCount,
     MediaDto? Media,
     double Lat,
@@ -32,11 +34,19 @@ public record PostDetailDto(
     string Body,
     DateTimeOffset CreatedAt,
     string AuthorGlyph,
+    int ReachBoost,
+    bool ViewerHasBoosted,
     MediaDto? Media,
     IReadOnlyList<ReplyDto> Replies,
     double Lat,
     double Lon);
 
+public record BoostResponse(int ReachBoost, bool ViewerHasBoosted);
+
 public record FeedResponse(IReadOnlyList<PostSummaryDto> Items, string? NextCursor);
 
 public record AvatarResponse(MediaDto Avatar);
+
+public record UpsertPushTokenRequest(string Token, string Platform);
+
+public record UpsertPushTokenResponse(string Token, string Platform);

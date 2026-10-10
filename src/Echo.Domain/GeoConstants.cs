@@ -2,8 +2,11 @@ namespace Echo.Domain;
 
 public static class GeoConstants
 {
-    /// <summary>Feed / visibility radius in meters.</summary>
+    /// <summary>Base feed / visibility radius in meters.</summary>
     public const double FeedRadiusMeters = 15_000;
+
+    /// <summary>Extra visibility meters granted by each reach boost.</summary>
+    public const double ReachBoostMetersPerLevel = 1_000;
 
     /// <summary>Max allowed distance between GPS and IP geolocation (meters).</summary>
     public const double IpMismatchMaxMeters = 100_000;

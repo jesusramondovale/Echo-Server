@@ -43,4 +43,12 @@ public sealed class FeedController(IFeedService feed) : ControllerBase
     [HttpPost("posts/{id:guid}/replies")]
     public Task<ReplyDto> CreateReply(Guid id, [FromBody] CreateReplyRequest request, CancellationToken ct)
         => feed.CreateReplyAsync(User.GetUserId(), id, request, HttpContext.GetClientIp(), ct);
+
+    [HttpPost("posts/{id:guid}/boost")]
+    public Task<BoostResponse> BoostPost(
+        Guid id,
+        [FromQuery] double lat,
+        [FromQuery] double lon,
+        CancellationToken ct)
+        => feed.BoostPostAsync(User.GetUserId(), id, lat, lon, HttpContext.GetClientIp(), ct);
 }
