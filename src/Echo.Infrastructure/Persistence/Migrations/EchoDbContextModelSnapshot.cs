@@ -171,6 +171,10 @@ namespace Echo.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("Locale")
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
                     b.Property<string>("Platform")
                         .IsRequired()
                         .HasMaxLength(16)

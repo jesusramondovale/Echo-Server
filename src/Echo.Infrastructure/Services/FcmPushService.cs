@@ -1,8 +1,10 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Echo.Application.Abstractions;
 using Echo.Application.Common;
+using Echo.Application.Services;
 using Echo.Domain.Entities;
 using Google.Apis.Auth.OAuth2;
 using Microsoft.EntityFrameworkCore;
@@ -42,12 +44,16 @@ public sealed class FcmPushService : IPushNotificationService
 
         try
         {
+            if (string.IsNullOrWhiteSpace(_projectId))
+            {
+                _projectId = null;
+            }
+
             if (!string.IsNullOrWhiteSpace(serviceAccountPath) && File.Exists(serviceAccountPath))
             {
                 _credential = GoogleCredential.FromFile(serviceAccountPath)
                     .CreateScoped("https://www.googleapis.com/auth/firebase.messaging");
                 _projectId ??= ReadProjectIdFromFile(serviceAccountPath);
-                _enabled = !string.IsNullOrWhiteSpace(_projectId);
             }
             else if (!string.IsNullOrWhiteSpace(_projectId)
                      && !string.IsNullOrWhiteSpace(clientEmail)
@@ -69,11 +75,15 @@ public sealed class FcmPushService : IPushNotificationService
                 });
                 _credential = GoogleCredential.FromJson(saJson)
                     .CreateScoped("https://www.googleapis.com/auth/firebase.messaging");
-                _enabled = true;
+            }
+
+            _enabled = _credential is not null && !string.IsNullOrWhiteSpace(_projectId);
+            if (_enabled)
+            {
+                _logger.LogInformation("FCM push enabled for project {ProjectId}.", _projectId);
             }
             else
             {
-                _enabled = false;
                 _logger.LogWarning(
                     "Firebase credentials missing (Firebase:ProjectId/ClientEmail/PrivateKey or ServiceAccountPath). Push notifications disabled.");
             }
@@ -90,20 +100,18 @@ public sealed class FcmPushService : IPushNotificationService
         Guid postId,
         CancellationToken cancellationToken = default)
     {
-        if (!_enabled) return;
+        if (!EnsureEnabled("boost")) return;
 
         var tokens = await _db.Set<PushToken>()
             .AsNoTracking()
             .Where(t => t.UserId == authorUserId)
-            .Select(t => t.Token)
-            .Distinct()
+            .Select(t => new DeviceToken(t.Token, t.Locale))
             .ToListAsync(cancellationToken);
 
-        await SendToTokensAsync(
+        await SendLocalizedAsync(
             tokens,
-            title: "Your echo got a boost",
-            body: "Someone extended your post's reach by 1 km.",
-            data: new Dictionary<string, string>
+            PushCopy.ForBoost,
+            new Dictionary<string, string>
             {
                 ["type"] = "boost",
                 ["postId"] = postId.ToString()
@@ -119,7 +127,7 @@ public sealed class FcmPushService : IPushNotificationService
         double radiusMeters,
         CancellationToken cancellationToken = default)
     {
-        if (!_enabled) return;
+        if (!EnsureEnabled("new_post")) return;
 
         var candidates = await _db.Set<PushToken>()
             .AsNoTracking()
@@ -129,6 +137,7 @@ public sealed class FcmPushService : IPushNotificationService
             .Select(t => new
             {
                 t.Token,
+                t.Locale,
                 Lat = t.User.LastLat!.Value,
                 Lon = t.User.LastLon!.Value
             })
@@ -136,20 +145,51 @@ public sealed class FcmPushService : IPushNotificationService
 
         var tokens = candidates
             .Where(c => GeoMath.HaversineMeters(lat, lon, c.Lat, c.Lon) <= radiusMeters)
-            .Select(c => c.Token)
+            .Select(c => new DeviceToken(c.Token, c.Locale))
             .Distinct()
             .ToList();
 
-        await SendToTokensAsync(
+        await SendLocalizedAsync(
             tokens,
-            title: "New echo nearby",
-            body: "Someone posted within your area.",
-            data: new Dictionary<string, string>
+            PushCopy.ForNewPost,
+            new Dictionary<string, string>
             {
                 ["type"] = "new_post",
                 ["postId"] = postId.ToString()
             },
             cancellationToken);
+    }
+
+    private bool EnsureEnabled(string kind)
+    {
+        if (_enabled) return true;
+        _logger.LogWarning("Push {Kind} skipped: FCM is disabled.", kind);
+        return false;
+    }
+
+    private async Task SendLocalizedAsync(
+        IReadOnlyList<DeviceToken> tokens,
+        Func<string, (string Title, string Body)> copyForLocale,
+        Dictionary<string, string> data,
+        CancellationToken cancellationToken)
+    {
+        if (tokens.Count == 0)
+        {
+            _logger.LogInformation("Push {Type} skipped: no target devices.", data.GetValueOrDefault("type"));
+            return;
+        }
+
+        foreach (var group in tokens.GroupBy(t => PushCopy.Normalize(t.Locale)))
+        {
+            var copy = copyForLocale(group.Key);
+            var batch = group.Select(t => t.Token).Distinct().ToList();
+            _logger.LogInformation(
+                "Push {Type} to {Count} device(s), locale {Locale}.",
+                data.GetValueOrDefault("type"),
+                batch.Count,
+                group.Key);
+            await SendToTokensAsync(batch, copy.Title, copy.Body, data, cancellationToken);
+        }
     }
 
     private async Task SendToTokensAsync(
@@ -191,7 +231,15 @@ public sealed class FcmPushService : IPushNotificationService
                         token,
                         notification = new { title, body },
                         data,
-                        android = new { priority = "high" },
+                        android = new
+                        {
+                            priority = "HIGH",
+                            notification = new
+                            {
+                                channelId = "echo_default",
+                                notificationPriority = "PRIORITY_HIGH"
+                            }
+                        },
                         apns = new
                         {
                             headers = new Dictionary<string, string> { ["apns-priority"] = "10" },
@@ -214,9 +262,7 @@ public sealed class FcmPushService : IPushNotificationService
                 }
 
                 var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-                if (response.StatusCode is System.Net.HttpStatusCode.NotFound
-                    || responseBody.Contains("UNREGISTERED", StringComparison.OrdinalIgnoreCase)
-                    || responseBody.Contains("INVALID_ARGUMENT", StringComparison.OrdinalIgnoreCase))
+                if (IsStaleToken(response.StatusCode, responseBody))
                 {
                     staleTokens.Add(token);
                 }
@@ -240,6 +286,20 @@ public sealed class FcmPushService : IPushNotificationService
                 .ExecuteDeleteAsync(cancellationToken);
         }
     }
+
+    private static bool IsStaleToken(HttpStatusCode status, string body)
+    {
+        if (status == HttpStatusCode.NotFound
+            || body.Contains("UNREGISTERED", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return body.Contains("INVALID_ARGUMENT", StringComparison.OrdinalIgnoreCase)
+               && body.Contains("registration token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private readonly record struct DeviceToken(string Token, string? Locale);
 
     private static string? ReadProjectIdFromFile(string path)
     {

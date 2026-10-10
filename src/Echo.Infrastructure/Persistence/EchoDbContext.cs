@@ -39,6 +39,7 @@ public sealed class EchoDbContext : DbContext
             e.HasKey(x => x.Id);
             e.Property(x => x.Token).HasMaxLength(512).IsRequired();
             e.Property(x => x.Platform).HasMaxLength(16).IsRequired();
+            e.Property(x => x.Locale).HasMaxLength(8);
             e.HasIndex(x => x.Token).IsUnique();
             e.HasIndex(x => x.UserId);
             e.HasOne(x => x.User)

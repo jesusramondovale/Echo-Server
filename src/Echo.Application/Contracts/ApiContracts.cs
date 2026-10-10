@@ -47,6 +47,6 @@ public record FeedResponse(IReadOnlyList<PostSummaryDto> Items, string? NextCurs
 
 public record AvatarResponse(MediaDto Avatar);
 
-public record UpsertPushTokenRequest(string Token, string Platform);
+public record UpsertPushTokenRequest(string Token, string Platform, string? Locale = null);
 
 public record UpsertPushTokenResponse(string Token, string Platform);

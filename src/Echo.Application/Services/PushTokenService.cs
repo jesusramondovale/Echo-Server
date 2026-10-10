@@ -32,6 +32,10 @@ public sealed class PushTokenService(DbContext db) : IPushTokenService
             throw new AppException(ErrorCodes.InvalidPushToken, "platform must be android or ios.", 400);
         }
 
+        var locale = string.IsNullOrWhiteSpace(request.Locale)
+            ? null
+            : PushCopy.Normalize(request.Locale);
+
         var userExists = await db.Set<AnonymousUser>().AnyAsync(u => u.Id == userId, cancellationToken);
         if (!userExists)
         {
@@ -49,6 +53,7 @@ public sealed class PushTokenService(DbContext db) : IPushTokenService
                 UserId = userId,
                 Token = token,
                 Platform = platform,
+                Locale = locale,
                 UpdatedAt = now
             });
         }
@@ -57,6 +62,10 @@ public sealed class PushTokenService(DbContext db) : IPushTokenService
             existing.UserId = userId;
             existing.Platform = platform;
             existing.UpdatedAt = now;
+            if (locale is not null)
+            {
+                existing.Locale = locale;
+            }
         }
 
         await db.SaveChangesAsync(cancellationToken);

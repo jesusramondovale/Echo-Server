@@ -7,5 +7,7 @@ public class PushToken
     public AnonymousUser User { get; set; } = null!;
     public required string Token { get; set; }
     public required string Platform { get; set; }
+    /// <summary>Language code used for push copy (en, es, de, fr, it, pt).</summary>
+    public string? Locale { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
